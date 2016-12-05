@@ -1,6 +1,7 @@
 #ifndef ENGINE_HPP
 #define ENGINE_HPP
 
+#include "engine/api/isochrone_parameters.hpp"
 #include "engine/api/match_parameters.hpp"
 #include "engine/api/nearest_parameters.hpp"
 #include "engine/api/route_parameters.hpp"
@@ -11,6 +12,7 @@
 #include "engine/datafacade/contiguous_block_allocator.hpp"
 #include "engine/datafacade_provider.hpp"
 #include "engine/engine_config.hpp"
+#include "engine/plugins/isochrone.hpp"
 #include "engine/plugins/match.hpp"
 #include "engine/plugins/nearest.hpp"
 #include "engine/plugins/table.hpp"
@@ -122,6 +124,12 @@ template <typename Algorithm> class Engine final : public EngineInterface
         return tile_plugin.HandleRequest(algorithms, params, result);
     }
 
+    Status Isochrone(const api::IsochroneParameters &parameters, std::string &result) const override final
+    {
+        auto algorithms = RoutingAlgorithms<Algorithm>{heaps, facade_provider->Get()};
+        return isochrone_plugin.HandleRequest(algorithms, params, result);
+    }
+
     static bool CheckCompability(const EngineConfig &config);
 
   private:
@@ -134,6 +142,7 @@ template <typename Algorithm> class Engine final : public EngineInterface
     const plugins::TripPlugin trip_plugin;
     const plugins::MatchPlugin match_plugin;
     const plugins::TilePlugin tile_plugin;
+    const plugins::IsochronePlugin isochrone_plugin;
 };
 
 template <>
