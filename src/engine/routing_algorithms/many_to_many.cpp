@@ -346,6 +346,7 @@ std::vector<EdgeWeight> manyToManySearch(SearchEngineData<Algorithm> &engine_wor
 
     if (target_indices.empty())
     {
+        std::clog << "Searching all targets " << phantom_nodes.size() << std::endl;
         for (const auto &phantom : phantom_nodes)
         {
             search_target_phantom(phantom);
@@ -353,6 +354,7 @@ std::vector<EdgeWeight> manyToManySearch(SearchEngineData<Algorithm> &engine_wor
     }
     else
     {
+        std::clog << "Target count " << target_indices.size() << std::endl;
         for (const auto index : target_indices)
         {
             const auto &phantom = phantom_nodes[index];
@@ -362,6 +364,7 @@ std::vector<EdgeWeight> manyToManySearch(SearchEngineData<Algorithm> &engine_wor
 
     if (source_indices.empty())
     {
+        std::clog << "Searching all sources " << phantom_nodes.size() << std::endl;
         for (const auto &phantom : phantom_nodes)
         {
             search_source_phantom(phantom);
@@ -369,6 +372,7 @@ std::vector<EdgeWeight> manyToManySearch(SearchEngineData<Algorithm> &engine_wor
     }
     else
     {
+        std::clog << "Source count " << source_indices.size() << std::endl;
         for (const auto index : source_indices)
         {
             const auto &phantom = phantom_nodes[index];
