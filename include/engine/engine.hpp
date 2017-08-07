@@ -49,6 +49,7 @@ class EngineInterface
     virtual Status Match(const api::MatchParameters &parameters,
                          util::json::Object &result) const = 0;
     virtual Status Tile(const api::TileParameters &parameters, std::string &result) const = 0;
+    virtual Status Isochrone(const api::IsochroneParameters &params, std::string &result) const = 0;
 };
 
 template <typename Algorithm> class Engine final : public EngineInterface
@@ -124,7 +125,7 @@ template <typename Algorithm> class Engine final : public EngineInterface
         return tile_plugin.HandleRequest(algorithms, params, result);
     }
 
-    Status Isochrone(const api::IsochroneParameters &parameters, std::string &result) const override final
+    Status Isochrone(const api::IsochroneParameters &params, std::string &result) const override final
     {
         auto algorithms = RoutingAlgorithms<Algorithm>{heaps, facade_provider->Get()};
         return isochrone_plugin.HandleRequest(algorithms, params, result);

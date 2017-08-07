@@ -1,11 +1,9 @@
 #include "engine/plugins/isochrone.hpp"
-#include "engine/edge_unpacker.hpp"
 #include "engine/plugins/plugin_base.hpp"
+#include "engine/routing_algorithms/many_to_many.hpp"
 #include "util/timing_util.hpp"
 #include "util/coordinate_calculation.hpp"
 #include "util/log.hpp"
-
-#include "extractor/edge_based_node.hpp"
 
 #include <queue>
 #include <iomanip>
@@ -23,7 +21,7 @@ namespace plugins
 IsochronePlugin::IsochronePlugin() {}
 
 Status
-IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataFacade> facade,
+IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorithms,
                                const api::IsochroneParameters &parameters,
                                std::string &pbf_buffer) const
 {
@@ -59,15 +57,18 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
     util::Log() << "sw " << southwest;
     util::Log() << "ne " << northeast;
 
+    using Facade = DataFacade<routing_algorithms::ch::Algorithm>;
+    const auto &facade = static_cast<const Facade&>(algorithms.GetFacade());
+
     TIMER_START(GET_EDGES_TIMER);
-    auto edges = facade->GetEdgesInBox(southwest, northeast);
+    auto edges = facade.GetEdgesInBox(southwest, northeast);
     TIMER_STOP(GET_EDGES_TIMER);
     util::Log() << "Fetch RTree " << TIMER_MSEC(GET_EDGES_TIMER);
 
     TIMER_START(PHANTOM_TIMER);
     // Convert edges to phantom nodes
     std::vector<PhantomNode> phantoms;
-    auto startpoints = facade->NearestPhantomNodes(startcoord, 1);
+    auto startpoints = facade.NearestPhantomNodes(startcoord, 1, engine::Approach::UNRESTRICTED);
     phantoms.push_back(startpoints.front().phantom_node);
 
     std::unordered_set<unsigned> seen_roads;
@@ -80,24 +81,31 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
     // on a road to get the full isochrone.
     std::for_each(edges.begin(), edges.end(), [&](const auto &data) {
 
-        if (seen_roads.count(data.packed_geometry_id) != 0)
-            return;
-
-        seen_roads.insert(data.packed_geometry_id);
-
         EdgeWeight forward_weight_offset = 0, forward_weight = 0;
         EdgeWeight reverse_weight_offset = 0, reverse_weight = 0;
         EdgeWeight forward_duration_offset = 0, forward_duration = 0;
         EdgeWeight reverse_duration_offset = 0, reverse_duration = 0;
 
+        BOOST_ASSERT(data.forward_segment_id.enabled || data.reverse_segment_id.enabled);
+        BOOST_ASSERT(!data.reverse_segment_id.enabled ||
+                     facade.GetGeometryIndex(data.forward_segment_id.id).id ==
+                         facade.GetGeometryIndex(data.reverse_segment_id.id).id);
+        const auto geometry_id = facade.GetGeometryIndex(data.forward_segment_id.id).id;
+        const auto component_id = facade.GetComponentID(data.forward_segment_id.id);
+
+        if (seen_roads.count(geometry_id) != 0)
+            return;
+
+        seen_roads.insert(geometry_id);
+
         const std::vector<EdgeWeight> forward_weight_vector =
-            facade->GetUncompressedForwardWeights(data.packed_geometry_id);
+            facade.GetUncompressedForwardWeights(geometry_id);
         const std::vector<EdgeWeight> reverse_weight_vector =
-            facade->GetUncompressedReverseWeights(data.packed_geometry_id);
+            facade.GetUncompressedReverseWeights(geometry_id);
         const std::vector<EdgeWeight> forward_duration_vector =
-            facade->GetUncompressedForwardDurations(data.packed_geometry_id);
+            facade.GetUncompressedForwardDurations(geometry_id);
         const std::vector<EdgeWeight> reverse_duration_vector =
-            facade->GetUncompressedReverseDurations(data.packed_geometry_id);
+            facade.GetUncompressedReverseDurations(geometry_id);
 
         forward_weight_offset =
             std::accumulate(forward_weight_vector.begin(), forward_weight_vector.end(), 0);
@@ -119,8 +127,22 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
         reverse_duration =
             reverse_duration_vector[reverse_duration_vector.size() - data.fwd_segment_position - 1];
 
-        auto vcoord = facade->GetCoordinateOfNode(data.v);
-        auto ucoord = facade->GetCoordinateOfNode(data.u);
+        // check phantom node segments validity
+        auto areSegmentsValid = [](auto first, auto last) -> bool {
+            return std::find(first, last, INVALID_SEGMENT_WEIGHT) == last;
+        };
+        bool is_forward_valid_source =
+            areSegmentsValid(forward_weight_vector.begin(), forward_weight_vector.end());
+        bool is_forward_valid_target =
+            areSegmentsValid(forward_weight_vector.begin(),
+                             forward_weight_vector.begin() + data.fwd_segment_position + 1);
+        bool is_reverse_valid_source =
+            areSegmentsValid(reverse_weight_vector.begin(), reverse_weight_vector.end());
+        bool is_reverse_valid_target = areSegmentsValid(
+            reverse_weight_vector.begin(), reverse_weight_vector.end() - data.fwd_segment_position);
+
+        auto vcoord = facade.GetCoordinateOfNode(data.v);
+        auto ucoord = facade.GetCoordinateOfNode(data.u);
 
         if (data.forward_segment_id.enabled)
         {
@@ -132,6 +154,7 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
             auto datacopy = data;
             datacopy.reverse_segment_id.enabled = false;
             phantoms.emplace_back(datacopy,
+                                  component_id,
                                   forward_weight,
                                   reverse_weight,
                                   forward_weight_offset,
@@ -140,6 +163,10 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
                                   reverse_duration,
                                   forward_duration_offset,
                                   reverse_duration_offset,
+                                  is_forward_valid_source,
+                                  is_forward_valid_target,
+                                  is_reverse_valid_source,
+                                  is_reverse_valid_target,
                                   vcoord,
                                   vcoord);
         }
@@ -151,6 +178,7 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
             auto datacopy = data;
             datacopy.forward_segment_id.enabled = false;
             phantoms.emplace_back(datacopy,
+                                  component_id,
                                   forward_weight,
                                   reverse_weight,
                                   forward_weight_offset,
@@ -159,6 +187,10 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
                                   reverse_duration,
                                   forward_duration_offset,
                                   reverse_duration_offset,
+                                  is_forward_valid_source,
+                                  is_forward_valid_target,
+                                  is_reverse_valid_source,
+                                  is_reverse_valid_target,
                                   ucoord,
                                   ucoord);
         }
@@ -175,8 +207,8 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
     util::Log() << "Make phantom nodes " << TIMER_MSEC(PHANTOM_TIMER);
 
     // Phase 1 - outgoing, upwards dijkstra search, setting d(v) for all v we visit
-    heaps.InitializeOrClearFirstThreadLocalStorage(facade->GetNumberOfNodes());
-    heaps.InitializeOrClearSecondThreadLocalStorage(facade->GetNumberOfNodes());
+    heaps.InitializeOrClearFirstThreadLocalStorage(facade.GetNumberOfNodes());
+    heaps.InitializeOrClearSecondThreadLocalStorage(facade.GetNumberOfNodes());
 
     auto &query_heap = *(heaps.forward_heap_1);
     if (phantoms[0].forward_segment_id.enabled)
@@ -197,12 +229,12 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
         const NodeID node = query_heap.DeleteMin();
         const EdgeWeight weight = query_heap.GetKey(node);
 
-        for (auto edge : facade->GetAdjacentEdgeRange(node))
+        for (auto edge : facade.GetAdjacentEdgeRange(node))
         {
-            const auto &data = facade->GetEdgeData(edge);
+            const auto &data = facade.GetEdgeData(edge);
             if (data.forward)
             {
-                const NodeID to = facade->GetTarget(edge);
+                const NodeID to = facade.GetTarget(edge);
                 const EdgeWeight edge_weight = data.weight;
 
                 BOOST_ASSERT_MSG(edge_weight > 0, "edge_weight invalid");
@@ -243,12 +275,12 @@ IsochronePlugin::HandleRequest(const std::shared_ptr<const datafacade::BaseDataF
     {
         const auto node =
             p.forward_segment_id.enabled ? p.forward_segment_id.id : p.reverse_segment_id.id;
-        for (const auto &edge : facade->GetAdjacentEdgeRange(node))
+        for (const auto &edge : facade.GetAdjacentEdgeRange(node))
         {
-            const auto &data = facade->GetEdgeData(edge);
+            const auto &data = facade.GetEdgeData(edge);
             if (data.backward)
             {
-                const NodeID to = facade->GetTarget(edge);
+                const NodeID to = facade.GetTarget(edge);
 
                 // New Node discovered -> Add to Heap + Node Info Storage
                 if (!query_heap.WasInserted(to))
