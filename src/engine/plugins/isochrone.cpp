@@ -241,7 +241,7 @@ IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorithms,
                 const EdgeWeight to_weight = weight + edge_weight;
 
                 // No need to search further than our maximum radius
-                if (weight > range * 10)
+                if (weight > static_cast<int>(range) * 10)
                     continue;
 
                 // New Node discovered -> Add to Heap + Node Info Storage
@@ -337,7 +337,7 @@ IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorithms,
         // the range, but the start of it is inside the range. We need
         // to chop this line somewhere.
         // TODO: actually do that.
-        if (weight > range * 10)
+        if (weight > static_cast<int>(range) * 10)
             continue;
 
         if (!firstline)
