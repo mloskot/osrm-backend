@@ -263,9 +263,9 @@ IsochronePlugin::HandleRequest(const RoutingAlgorithmsInterface &algorithms,
     // Phase 2 - scan nodes in descending CH order, updating d(v) where we can
     TIMER_START(TABLE_TIMER);
     std::sort(phantoms.begin(), phantoms.end(), [](const auto &a, const auto &b) {
-        const auto &a_id =
+        const auto a_id =
             a.forward_segment_id.enabled ? a.forward_segment_id.id : a.reverse_segment_id.id;
-        const auto &b_id =
+        const auto b_id =
             b.forward_segment_id.enabled ? b.forward_segment_id.id : b.reverse_segment_id.id;
 
         return a_id < b_id;
